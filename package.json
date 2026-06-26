@@ -100,7 +100,7 @@
     "viewsWelcome": [
       {
         "view": "copilotUsageTree",
-        "contents": "Set `github.copilot.chat.agentDebugLog.fileLogging.enabled` to **true**, then start a new Copilot Chat session.\n\n[Open Setting](command:workbench.action.openSettings?%22github.copilot.chat.agentDebugLog.fileLogging.enabled%22)",
+        "contents": "No Copilot Chat session data found yet.\n\n**Option 1 — File logging (debug detail):**\nSet `github.copilot.chat.agentDebugLog.fileLogging.enabled` to **true**, then start a new Copilot Chat session.\n\n[Open Setting](command:workbench.action.openSettings?%22github.copilot.chat.agentDebugLog.fileLogging.enabled%22)\n\n**Option 2 — SQLite OTel data (exact tokens):**\nEnable `copilotUsageTracker.useSqliteData` to read token usage from the Copilot OTel database. This also enables the OTel span exporter automatically.\n\n[Open Setting](command:workbench.action.openSettings?%22copilotUsageTracker.useSqliteData%22)",
         "when": "!copilotUsageTracker.hasSession"
       }
     ],
@@ -116,7 +116,11 @@
     "languageModelTools": [
       {
         "name": "usage-search-sessions",
-        "tags": ["copilot", "usage", "sessions"],
+        "tags": [
+          "copilot",
+          "usage",
+          "sessions"
+        ],
         "toolReferenceName": "searchSessions",
         "displayName": "Search Chat Sessions",
         "modelDescription": "Search recent Copilot Chat sessions by keyword (supports multiple words as OR match). Always returns the last 2 days of sessions as a safety net alongside search results. Use this FIRST before usage-get-graph unless the user explicitly says 'this session' or 'the current one'. Returns session IDs you can pass to usage-get-graph.",
@@ -140,7 +144,11 @@
       },
       {
         "name": "usage-get-graph",
-        "tags": ["copilot", "usage", "analysis"],
+        "tags": [
+          "copilot",
+          "usage",
+          "analysis"
+        ],
         "toolReferenceName": "getGraph",
         "displayName": "Get Session Graph",
         "modelDescription": "Get the full data graph for a Copilot Chat session. Returns stats, messages, tool calls, nested subagent messages/turns, commands, and costs. Omit sessionId only when the user says 'this session' or 'the loaded one'. Otherwise call usage-search-sessions first to get the correct session ID. Analyze the returned data for risks, patterns, waste, repeated terminal commands, and tool usage.",
@@ -166,6 +174,11 @@
     "configuration": {
       "title": "Copilot Usage Tracker",
       "properties": {
+        "copilotUsageTracker.useSqliteData": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use Copilot SQLite Data: when enabled, reads token usage from the Copilot OTel SQLite database (`agent-traces.db`) instead of the chat-session JSONL files. Enabling this also sets `github.copilot.chat.otel.dbSpanExporter.enabled` to true so the database is populated."
+        },
         "copilotUsageTracker.searchRoots": {
           "type": "array",
           "items": {
@@ -192,9 +205,13 @@
     "package": "vsce package"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.14.10",
     "@types/vscode": "^1.101.0",
     "@vscode/vsce": "^3.0.0",
     "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1"
   }
 }

@@ -25,8 +25,10 @@ import {
     SpendSummary,
     SpendWorkspaceBucket,
     computeSpendSummaryFromChatSessionDirs,
+    computeSpendSummaryFromSqlite,
     getSpendFileCachePath,
 } from './spend';
+import { getOtelDbPaths, readSpendRequestsFromSqlite } from './sqlite';
 
 /**
  * Title priority levels (higher = better):
@@ -43,6 +45,8 @@ interface TitleEntry {
 
 const AI_CREDITS_DOCS_URI = vscode.Uri.parse('https://docs.github.com/en/copilot/concepts/billing/usage-based-billing-for-individuals');
 const DEBUG_LOGS_SETTING = 'github.copilot.chat.agentDebugLog.fileLogging.enabled';
+const SQLITE_DATA_SETTING = 'copilotUsageTracker.useSqliteData';
+const OTEL_DB_SETTING = 'github.copilot.chat.otel.dbSpanExporter.enabled';
 const INITIAL_PICK_DAYS = 3;
 const PICK_LOAD_MORE_DAYS = 10;
 const DEBUG_DIR_CACHE_MS = 30_000;
@@ -92,6 +96,10 @@ function formatLocalTime(timestamp: number): string {
 
 function isDebugLogsSettingEnabled(): boolean {
     return vscode.workspace.getConfiguration().get<boolean>(DEBUG_LOGS_SETTING) === true;
+}
+
+function isSqliteDataSettingEnabled(): boolean {
+    return vscode.workspace.getConfiguration().get<boolean>(SQLITE_DATA_SETTING) === true;
 }
 
 function getWorkspaceStorageRoots(): string[] {
@@ -390,7 +398,14 @@ function computeSpendSummary(mode: SpendScanMode, refresh = false, cacheFilePath
         return cache.summary;
     }
 
-    const summary = computeSpendSummaryFromChatSessionDirs(mode, findAllChatSessionDirs(refresh), { cacheFilePath });
+    let summary: SpendSummary;
+    if (isSqliteDataSettingEnabled()) {
+        const dbPaths = getOtelDbPaths();
+        const allRequests = dbPaths.flatMap(p => readSpendRequestsFromSqlite(p));
+        summary = computeSpendSummaryFromSqlite(mode, allRequests);
+    } else {
+        summary = computeSpendSummaryFromChatSessionDirs(mode, findAllChatSessionDirs(refresh), { cacheFilePath });
+    }
 
     const cacheEntry = { summary, expiresAt: Date.now() + SPEND_SCAN_CACHE_MS };
     if (mode === 'full') {
@@ -1612,6 +1627,26 @@ export function activate(context: vscode.ExtensionContext) {
             clearTimeout(spendRefreshTimer);
         }
         clearInterval(spendAutoRefreshInterval);
+    }));
+
+    // Handle SQLite data setting changes: enable OTel exporter and refresh spend view.
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration(SQLITE_DATA_SETTING)) {
+            if (isSqliteDataSettingEnabled()) {
+                // Enable the OTel DB span exporter so the database is populated
+                vscode.workspace.getConfiguration().update(
+                    OTEL_DB_SETTING,
+                    true,
+                    vscode.ConfigurationTarget.Global
+                ).then(undefined, err => {
+                    console.warn('Copilot Usage: failed to enable OTel DB span exporter', err);
+                });
+            }
+            // Invalidate spend cache and refresh with the new backend
+            todaySpendSummaryCache = undefined;
+            fullSpendSummaryCache = undefined;
+            scheduleVisibleSpendSummaryRefresh(true);
+        }
     }));
 
     // Auto-load the most recent session, prioritizing the current workspace

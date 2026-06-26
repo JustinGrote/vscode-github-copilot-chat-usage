@@ -894,3 +894,94 @@ export function computeSpendSummaryFromChatSessionDirs(
 
     return summary;
 }
+
+const SQLITE_WORKSPACE_KEY = 'otel-sqlite';
+const SQLITE_WORKSPACE_LABEL = 'OTel Traces';
+
+export function computeSpendSummaryFromSqlite(
+    mode: SpendScanMode,
+    requests: SpendRequest[],
+    options: { now?: number } = {}
+): SpendSummary {
+    const now = options.now ?? Date.now();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayCutoff = todayStart.getTime();
+    const weekCutoff = now - 7 * 24 * 60 * 60 * 1000;
+    const monthCutoff = now - SPEND_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+    const includeHistory = mode === 'full';
+
+    const sqliteWorkspace: ChatSessionDirEntry = {
+        dir: SQLITE_WORKSPACE_KEY,
+        workspaceKey: SQLITE_WORKSPACE_KEY,
+        workspaceLabel: SQLITE_WORKSPACE_LABEL,
+    };
+
+    const summary: SpendSummary = {
+        today: createSpendBucket('Today'),
+        week: includeHistory ? createSpendBucket('Last 7 days') : undefined,
+        month: includeHistory ? createSpendBucket('Last 30 days') : undefined,
+        scannedFiles: 0,
+        generatedAt: now,
+    };
+    const todaySessions = new Set<string>();
+    const weekSessions = new Set<string>();
+    const monthSessions = new Set<string>();
+    const todayWorkspaces = createSpendWorkspaceAccumulator();
+    const weekWorkspaces = createSpendWorkspaceAccumulator();
+    const monthWorkspaces = createSpendWorkspaceAccumulator();
+    const todayModels = createSpendModelAccumulator();
+    const weekModels = createSpendModelAccumulator();
+    const monthModels = createSpendModelAccumulator();
+
+    const dedupedCandidates = new Map<string, SpendRequestCandidate>();
+    const undedupedCandidates: SpendRequestCandidate[] = [];
+
+    for (const request of requests) {
+        if (request.timestamp === undefined) {
+            continue;
+        }
+        collectSpendCandidate(dedupedCandidates, undedupedCandidates, {
+            request: request as SpendRequest & { timestamp: number },
+            sessionKey: request.dedupeKey ?? String(request.timestamp),
+            workspace: sqliteWorkspace,
+        });
+    }
+
+    const candidates = [...dedupedCandidates.values(), ...undedupedCandidates];
+    for (const { request, sessionKey, workspace } of candidates) {
+        const timestamp = request.timestamp;
+        if (timestamp >= todayCutoff) {
+            addToSpendBucket(summary.today, request, todaySessions, sessionKey);
+            addToSpendWorkspaces(todayWorkspaces, request, sessionKey, workspace);
+            addToSpendModels(todayModels, request, sessionKey);
+        }
+        if (includeHistory && summary.week && summary.month) {
+            if (timestamp >= monthCutoff) {
+                addToSpendBucket(summary.month, request, monthSessions, sessionKey);
+                addToSpendWorkspaces(monthWorkspaces, request, sessionKey, workspace);
+                addToSpendModels(monthModels, request, sessionKey);
+            }
+            if (timestamp >= weekCutoff) {
+                addToSpendBucket(summary.week, request, weekSessions, sessionKey);
+                addToSpendWorkspaces(weekWorkspaces, request, sessionKey, workspace);
+                addToSpendModels(weekModels, request, sessionKey);
+            }
+        }
+    }
+
+    summary.today.workspaces = finalizeSpendWorkspaces(todayWorkspaces);
+    summary.today.models = finalizeSpendModels(todayModels);
+    if (includeHistory) {
+        if (summary.week) {
+            summary.week.workspaces = finalizeSpendWorkspaces(weekWorkspaces);
+            summary.week.models = finalizeSpendModels(weekModels);
+        }
+        if (summary.month) {
+            summary.month.workspaces = finalizeSpendWorkspaces(monthWorkspaces);
+            summary.month.models = finalizeSpendModels(monthModels);
+        }
+    }
+
+    return summary;
+}
